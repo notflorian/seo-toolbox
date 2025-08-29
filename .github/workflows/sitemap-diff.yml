@@ -1,0 +1,102 @@
+name: Sitemap diff (hourly)
+
+on:
+  schedule:
+    - cron: "0 * * * *"   # hourly, UTC
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    concurrency:
+      group: sitemap-diff
+      cancel-in-progress: false
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install --quiet requests
+
+      - name: Show tree (debug)
+        run: |
+          pwd
+          ls -la
+          echo "---------"
+          ls -la scripts || true
+          ls -la sitemaps || true
+          ls -la state || true
+
+      - name: Run sitemap diff
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p state
+          : > run-output.txt   # ensure file exists even if the script exits early
+          python scripts/sitemap_diff.py sitemaps/sitemaps.txt \
+            --state-file state/.sitemap_state.json \
+            --recent-days 7 \
+            > run-output.txt
+          echo "---- Workflow output ----"
+          cat run-output.txt
+
+      - name: Decide whether there are new URLs
+        id: gate
+        run: |
+          if grep -q '^New URLs in last ' run-output.txt; then
+            echo "has_new=true" >> $GITHUB_OUTPUT
+          else
+            echo "has_new=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Upload output + state artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sitemap-diff-${{ github.run_id }}-${{ github.run_number }}
+          path: |
+            run-output.txt
+            state/.sitemap_state.json
+          retention-days: 30
+          if-no-files-found: warn   # avoids hard-failing this step if something went wrong earlier
+
+      - name: Capture email body
+        id: read
+        if: steps.gate.outputs.has_new == 'true'
+        run: |
+          echo 'text<<EOF' >> $GITHUB_OUTPUT
+          cat run-output.txt >> $GITHUB_OUTPUT
+          echo 'EOF' >> $GITHUB_OUTPUT
+
+      - name: Send email via Mailgun SMTP (only when new URLs)
+        if: steps.gate.outputs.has_new == 'true'
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: ${{ secrets.SMTP_HOST }}
+          server_port: ${{ secrets.SMTP_PORT }}
+          username: ${{ secrets.SMTP_USERNAME }}
+          password: ${{ secrets.SMTP_PASSWORD }}
+          from: ${{ secrets.FROM_EMAIL }}
+          to: ${{ secrets.TO_EMAIL }}
+          subject: "Sitemap diff: new URLs"
+          content_type: text/plain
+          body: ${{ steps.read.outputs.text }}
+
+      - name: Commit updated state (if changed)
+        run: |
+          if [[ -n "$(git status --porcelain state/.sitemap_state.json)" ]]; then
+            git config user.name  "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add state/.sitemap_state.json
+            git commit -m "chore: update sitemap state [skip ci]"
+            git push
+          fi
