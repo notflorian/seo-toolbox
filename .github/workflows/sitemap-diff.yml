@@ -52,7 +52,7 @@ jobs:
       - name: Decide whether there are new URLs
         id: gate
         run: |
-          if grep -q '^New URLs in last ' run-output.txt; then
+          if grep -q '^New URLs' run-output.txt; then
             echo "has_new=true" >> $GITHUB_OUTPUT
           else
             echo "has_new=false" >> $GITHUB_OUTPUT
