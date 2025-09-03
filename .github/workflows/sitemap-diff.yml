@@ -88,9 +88,13 @@ jobs:
           from: ${{ secrets.FROM_EMAIL }}
           to: ${{ secrets.TO_EMAIL }}
           subject: "Sitemap diff: new URLs"
-          content_type: text/plain
-          body: ${{ steps.read.outputs.text }}
+          body: |
+      New URLs detected (preview below). Full details attached.
 
+      --- PREVIEW (first 100 lines) ---
+      ${{ steps.none.outputs.noop || '' }}
+          attachments: run-output.txt
+          
       - name: Commit updated state (if changed)
         run: |
           if [[ -n "$(git status --porcelain state/.sitemap_state.json)" ]]; then
