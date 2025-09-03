@@ -62,7 +62,6 @@ https://claramartignyphotographie.fr/post-sitemap.xml
 https://claravalette-photographe.fr/post-sitemap.xml
 https://clemencearesu.com/post-sitemap.xml
 https://clement-renaut.fr/post-sitemap.xml
-https://clementine-photographe.com/post-sitemap.xml
 https://davidmichelphotographe.fr/post-sitemap.xml
 https://delphinegphotographie.fr/post-sitemap.xml
 https://duo-azul.com/post-sitemap.xml
@@ -149,7 +148,6 @@ https://thomasorsatelli.com/post-sitemap.xml
 https://uninstantphoto.com/post-sitemap.xml
 https://utopikphoto.fr/post-sitemap.xml
 https://vanessa-rodrigue.com/sitemap-1.xml
-https://vanessageorges.com/post-sitemap.xml
 https://verenesphotographie.com/post-sitemap.xml
 https://vincentmontagne.com/post-sitemap.xml
 https://virginierudolf.fr/post-sitemap.xml
