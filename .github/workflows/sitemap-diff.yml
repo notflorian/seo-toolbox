@@ -89,10 +89,10 @@ jobs:
           to: ${{ secrets.TO_EMAIL }}
           subject: "Sitemap diff: new URLs"
           body: |
-      New URLs detected (preview below). Full details attached.
-
-      --- PREVIEW (first 100 lines) ---
-      ${{ steps.none.outputs.noop || '' }}
+            New URLs detected (preview below). Full details attached.
+            
+            --- PREVIEW (first 100 lines) ---
+            ${{ steps.none.outputs.noop || '' }}
           attachments: run-output.txt
           
       - name: Commit updated state (if changed)
