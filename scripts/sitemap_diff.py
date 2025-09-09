@@ -50,13 +50,11 @@ StateType = t.Dict[str, t.Any]  # Overall state structure
 # {
 #   "sitemaps": {
 #       sitemap_url: {
-#           "urls": dict[str, t.Optional[str]],  # url -> lastmod string or None
-#           "fetched_at": str
+#           "urls": list[dict[str, str]],  # each dict: {"loc": str, "lastmod": str (optional)}
 #       },
 #   },
 #   "run_at": str
 # }
-
 
 def _now_utc_iso_z() -> str:
     # RFC3339 UTC with trailing Z
@@ -67,23 +65,17 @@ def load_state(path: Path) -> StateType:
         try:
             with path.open("r", encoding="utf-8") as f:
                 data: StateType = json.load(f)
-                # normalize sets
-                for sm, entry in data.get("sitemaps", {}).items():
-                    if isinstance(entry.get("urls"), list):
-                        entry["urls"] = set(entry["urls"])  # type: ignore[assignment]
+                # No normalization needed, just ensure "urls" is a list of dicts
                 return data
         except Exception as e:
             print(f"⚠️  Could not read state file {path}: {e}", file=sys.stderr)
     return {"sitemaps": {}, "run_at": None}
 
 def save_state(path: Path, state: StateType) -> None:
-    # convert sets to lists
     to_save: StateType = {"sitemaps": {}, "run_at": _now_utc_iso_z()}
     for sm, entry in state.get("sitemaps", {}).items():
-        urls = entry.get("urls", set())
-        if isinstance(urls, set):
-            urls = sorted(urls)
-        to_save["sitemaps"][sm] = {"urls": urls, "fetched_at": entry.get("fetched_at")}
+        urls = entry.get("urls", [])
+        to_save["sitemaps"][sm] = {"urls": urls}
     with path.open("w", encoding="utf-8") as f:
         json.dump(to_save, f, indent=2, ensure_ascii=False)
 
@@ -178,8 +170,7 @@ def _inject_missing_ns(content: bytes) -> bytes:
     new_text = text.replace(root_tag, new_root, 1)
     return new_text.encode("utf-8", errors="ignore")
 
-
-def _lenient_extract_loc_urls(content: bytes) -> set[str]:
+def _lenient_extract_loc_urls(content: bytes) -> list[dict[str, str]]:
     """
     Very lenient extractor: grabs any <loc>...</loc> occurrences, even if the XML is malformed.
     It ignores structure and namespaces. Intended as a last-resort fallback when parsing fails
@@ -191,9 +182,7 @@ def _lenient_extract_loc_urls(content: bytes) -> set[str]:
     if first > 0:
         text = text[first:]
     loc_values = re.findall(r"<\s*loc\b[^>]*>(.*?)</\s*loc\s*>", text, flags=re.IGNORECASE | re.DOTALL)
-    urls: set[str] = set()
-    if not loc_values:
-        return urls
+    urls: list[dict[str, str]] = []
     def _unescape(s: str) -> str:
         return (s.replace("&amp;", "&")
                 .replace("&lt;", "<")
@@ -203,9 +192,8 @@ def _lenient_extract_loc_urls(content: bytes) -> set[str]:
     for v in loc_values:
         u = _unescape(v.strip())
         if u:
-            urls.add(u)
+            urls.append({"loc": u})
     return urls
-
 
 def parse_xml(content: bytes) -> ET.Element:
     content = _sanitize_xml_bytes(content)
@@ -226,15 +214,20 @@ def root_tag_name(elem: ET.Element) -> str:
         return elem.tag.split("}", 1)[1]
     return str(elem.tag)
 
-def collect_page_urls_from_urlset(root: ET.Element) -> set[str]:
-    urls: set[str] = set()
-    # Prefer strict path <urlset>/<url>/<loc>
-    for loc in root.findall(".//{*}url/{*}loc"):
-        if loc.text:
-            urls.add(loc.text.strip())
+def collect_page_urls_from_urlset(root: ET.Element) -> list[dict[str, str]]:
+    urls: list[dict[str, str]] = []
+    for url_elem in root.findall(".//{*}url"):
+        loc_elem = url_elem.find("{*}loc")
+        if loc_elem is not None and loc_elem.text:
+            entry = {"loc": loc_elem.text.strip()}
+            lastmod_elem = url_elem.find("{*}lastmod")
+            if lastmod_elem is not None and lastmod_elem.text:
+                entry["lastmod"] = lastmod_elem.text.strip()
+            urls.append(entry)
     # Fallback in case namespaces are odd
     if not urls:
-        urls.update(iter_loc_texts(root))
+        for loc in iter_loc_texts(root):
+            urls.append({"loc": loc})
     return urls
 
 def collect_child_sitemaps_from_index(root: ET.Element) -> list[str]:
@@ -248,12 +241,12 @@ def collect_child_sitemaps_from_index(root: ET.Element) -> list[str]:
         locs = list(iter_loc_texts(root))
     return locs
 
-def crawl_sitemap(sitemap_url: str, follow_index: bool, timeout: float, workers: int = 8, verbose: bool = False) -> set[str]:
+def crawl_sitemap(sitemap_url: str, follow_index: bool, timeout: float, workers: int = 8, verbose: bool = False) -> list[dict[str, str]]:
     """Return a set of page URLs contained in the sitemap (following indexes if requested)."""
     fetched = fetch(sitemap_url, timeout=timeout)
     if not fetched.get("ok"):
         print(f"  ✖ Failed to fetch {sitemap_url} ({fetched.get('status', 0)}): {fetched.get('error')}", file=sys.stderr)
-        return set()
+        return []
     try:
         root = parse_xml(fetched["content"])  # type: ignore[index]
     except Exception as e:
@@ -272,7 +265,7 @@ def crawl_sitemap(sitemap_url: str, follow_index: bool, timeout: float, workers:
                 if verbose:
                     print(f"  ⚠ Using lenient <loc> extraction for {sitemap_url} (malformed XML).", file=sys.stderr)
                 return urls
-            return set()
+            return []
 
     kind = root_tag_name(root).lower()
     if kind == "urlset":
@@ -280,50 +273,86 @@ def crawl_sitemap(sitemap_url: str, follow_index: bool, timeout: float, workers:
 
     if kind == "sitemapindex" and follow_index:
         child_sitemaps = collect_child_sitemaps_from_index(root)
-        page_urls: set[str] = set()
+        page_urls: list[dict[str, str]] = []
         # Fetch children concurrently
         with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as ex:
             futures = {ex.submit(crawl_sitemap, sm, False, timeout, workers, verbose): sm for sm in child_sitemaps}
             for fut in concurrent.futures.as_completed(futures):
                 try:
-                    page_urls |= fut.result()
+                    page_urls.extend(fut.result())
                 except Exception as e:
                     sm = futures[fut]
                     print(f"  ✖ Error crawling child sitemap {sm}: {e}", file=sys.stderr)
         return page_urls
 
-    # If unknown structure, try best-effort to gather any <loc> (may over-include child sitemap URLs)
-    return set(iter_loc_texts(root))
+    # If unknown structure, try best-effort to gather any <loc>
+    return [{"loc": loc} for loc in iter_loc_texts(root)]
 
-def diff(old: set[str], new: set[str]) -> tuple[set[str], set[str]]:
-    added = new - old
-    removed = old - new
-    return added, removed
+def diff(old: list[dict[str, str]], new: list[dict[str, str]]) -> tuple[list[dict[str, str]], list[dict[str, str]], list[dict[str, str]]]:
+    old_map = {u["loc"]: u.get("lastmod") for u in old}
+    new_map = {u["loc"]: u.get("lastmod") for u in new}
+    old_set = set(old_map.keys())
+    new_set = set(new_map.keys())
+    added_locs = new_set - old_set
+    removed_locs = old_set - new_set
+    updated_locs = set()
+    for loc in (old_set & new_set):
+        old_mod = old_map.get(loc)
+        new_mod = new_map.get(loc)
+        if old_mod and new_mod:
+            try:
+                dt_old = dt.datetime.fromisoformat(old_mod.replace("Z", "+00:00"))
+                dt_new = dt.datetime.fromisoformat(new_mod.replace("Z", "+00:00"))
+                if dt_new > dt_old:
+                    updated_locs.add(loc)
+            except Exception:
+                pass
+    added = [u for u in new if u["loc"] in added_locs]
+    removed = [u for u in old if u["loc"] in removed_locs]
+    updated = [u for u in new if u["loc"] in updated_locs]
+    return added, removed, updated
 
-def print_changes(sitemap: str, prev_urls: set[str], curr_urls: set[str],
-                  max_print: int, verbose: bool) -> tuple[set[str], set[str]]:
-    added, removed = diff(prev_urls, curr_urls)
+def print_changes(sitemap: str, prev_urls: list[dict[str, str]], curr_urls: list[dict[str, str]],
+                  max_print: int, verbose: bool) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
+    added, removed, updated = diff(prev_urls, curr_urls)
     if verbose:
         print(f"\n=== {sitemap} ===")
         print(f"  URLs now: {len(curr_urls)} | Previously: {len(prev_urls)} | +{len(added)} / -{len(removed)}")
-        if not added and not removed:
+        if not added and not removed and not updated:
             print("  No changes.")
         else:
             if added:
                 print(f"  Added ({len(added)}):")
-                for i, u in enumerate(sorted(added)):
+                for i, u in enumerate(added):
                     if i >= max_print:
                         print(f"    ... and {len(added)-max_print} more")
                         break
-                    print(f"    + {u}")
+                    print(f"    + {u['loc']}")
             if removed:
                 print(f"  Removed ({len(removed)}):")
-                for i, u in enumerate(sorted(removed)):
+                for i, u in enumerate(removed):
                     if i >= max_print:
                         print(f"    ... and {len(removed)-max_print} more")
                         break
-                    print(f"    - {u}")
+                    print(f"    - {u['loc']}")
+            if updated:
+                print(f"  Updated ({len(updated)}):")
+                for i, u in enumerate(updated):
+                    if i >= max_print:
+                        print(f"    ... and {len(updated)-max_print} more")
+                        break
+                    print(f"    ~ {u['loc']} (lastmod updated)")
     return added, removed
+
+def is_recent(lastmod: str | None, recent_days: int) -> bool:
+    if not lastmod:
+        return False
+    try:
+        dt_lastmod = dt.datetime.fromisoformat(lastmod.replace("Z", "+00:00"))
+        delta = dt.datetime.now(dt.timezone.utc) - dt_lastmod
+        return 0 <= delta.days < recent_days
+    except Exception:
+        return False
 
 def main() -> int:
     ap = argparse.ArgumentParser(description="Compare <loc> URLs in sitemaps across runs and print changes.")
@@ -354,24 +383,36 @@ def main() -> int:
     state = load_state(args.state_file)
     state.setdefault("sitemaps", {})
 
-    all_new: list[str] = []
+    all_new: list[dict[str, str]] = []
+    all_updated: list[dict[str, str]] = []
 
     for sm in sitemaps:
         prev_entry = state["sitemaps"].get(sm, {})
-        prev_urls: set[str] = set(prev_entry.get("urls", set()))  # type: ignore[arg-type]
+        prev_urls: list[dict[str, str]] = prev_entry.get("urls", [])
         curr_urls = crawl_sitemap(sm, follow_index, args.timeout, args.workers, args.verbose)
-        added, removed = print_changes(sm, prev_urls, curr_urls, args.max_print, args.verbose)
-        all_new.extend(sorted(added))
-        state["sitemaps"][sm] = {"urls": curr_urls, "fetched_at": _now_utc_iso_z()}
+        if curr_urls:
+            added, removed, updated = diff(prev_urls, curr_urls)
+            print_changes(sm, prev_urls, curr_urls, args.max_print, args.verbose)
+            all_new.extend(added)
+            all_updated.extend(updated)
+            state["sitemaps"][sm] = {"urls": curr_urls}
 
     save_state(args.state_file, state)
     if args.verbose:
         print(f"\nState saved to {args.state_file}")
 
-    if all_new:
-        print(f"New URLs ({len(all_new)} total):")
-        for u in all_new:
-            print(u)
+    # Filter by recent-days
+    recent_new = [u for u in all_new if is_recent(u.get("lastmod"), args.recent_days)]
+    recent_updated = [u for u in all_updated if is_recent(u.get("lastmod"), args.recent_days)]
+
+    if recent_new:
+        print(f"New URLs ({len(recent_new)} total, lastmod within {args.recent_days} days):")
+        for u in recent_new:
+            print(u["loc"])
+    if recent_updated:
+        print(f"Updated URLs ({len(recent_updated)} total, lastmod within {args.recent_days} days):")
+        for u in recent_updated:
+            print(u["loc"])
     return 0
 
 if __name__ == "__main__":

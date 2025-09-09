@@ -69,13 +69,15 @@ jobs:
           retention-days: 30
           if-no-files-found: warn   # avoids hard-failing this step if something went wrong earlier
 
-      - name: Capture email body
+      - name: Capture email body (first 100 lines)
         id: read
         if: steps.gate.outputs.has_new == 'true'
         run: |
-          echo 'text<<EOF' >> $GITHUB_OUTPUT
-          cat run-output.txt >> $GITHUB_OUTPUT
-          echo 'EOF' >> $GITHUB_OUTPUT
+          {
+            echo 'text<<EOF'
+            head -n 100 run-output.txt
+            echo 'EOF'
+          } >> "$GITHUB_OUTPUT"
 
       - name: Send email via Mailgun SMTP (only when new URLs)
         if: steps.gate.outputs.has_new == 'true'
@@ -89,11 +91,10 @@ jobs:
           to: ${{ secrets.TO_EMAIL }}
           subject: "Sitemap diff: new URLs"
           body: |
-            New URLs detected (preview below). Full details attached.
+            New URLs detected (preview below).
             
             --- PREVIEW (first 100 lines) ---
-            ${{ steps.none.outputs.noop || '' }}
-          attachments: run-output.txt
+             ${{ steps.read.outputs.text }}
           
       - name: Commit updated state (if changed)
         run: |
