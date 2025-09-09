@@ -408,6 +408,7 @@ def main() -> int:
         prev_entry = state["sitemaps"].get(sm, {})
         prev_urls: list[dict[str, str]] = prev_entry.get("urls", [])
         curr_urls = crawl_sitemap(sm, follow_index, args.timeout, args.workers, args.verbose)
+        curr_urls.sort(key=lambda u: u.get("loc", ""))  # Sort alphabetically by 'loc'
         if curr_urls:
             added, removed, updated = diff(prev_urls, curr_urls)
             print_changes(sm, prev_urls, curr_urls, args.max_print, args.verbose)
