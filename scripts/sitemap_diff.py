@@ -117,8 +117,26 @@ def fetch(url: str, timeout: float = 60.0) -> FetchResult:
             return {"url": url, "ok": False, "error": str(e)}
     try:
         headers = {
-            "User-Agent": "sitemap-diff/1.0 (+https://example.com)",
-            "Accept": "application/xml,text/xml,application/xhtml+xml;q=0.9,*/*;q=0.8",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+            "Accept-Encoding": "gzip, deflate, br, zstd",
+            "Accept-Language": "en-US,en;q=0.9,fr;q=0.8",
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "Pragma": "no-cache",
+            "Priority": "u=0, i",
+            "Sec-Ch-Device-Memory" : "8",
+            "Sec-Ch-Ua": "\"Not;A=Brand\";v=\"99\", \"Google Chrome\";v=\"139\", \"Chromium\";v=\"139\"",
+            "Sec-Ch-Ua-Arch": "\"x86\"",
+            "Sec-Ch-Ua-Full-Version-List": "\"Not;A=Brand\";v=\"99.0.0.0\", \"Google Chrome\";v=\"139.0.7258.155\", \"Chromium\";v=\"139.0.7258.155\"",
+            "Sec-Ch-Ua-Mobile": "?0",
+            "Sec-Ch-Ua-Model": "\"\"",
+            "Sec-Ch-Ua-Platform": "\"Windows\"",
+            "Sec-Fetch-Dest": "document",
+            "Sec-Fetch-Mode": "navigate",
+            "Sec-Fetch-Site": "none",
+            "Sec-Fetch-User": "?1",
+            "Upgrade-Insecure-Requests": "1",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36",
         }
         resp = requests.get(url, headers=headers, timeout=timeout)
         content = resp.content or b""
