@@ -48,12 +48,9 @@ class FetchResult(t.TypedDict, total=False):
 
 StateType = t.Dict[str, t.Any]  # Overall state structure
 # {
-#   "sitemaps": {
-#       sitemap_url: {
-#           "urls": list[dict[str, str]],  # each dict: {"loc": str, "lastmod": str (optional)}
-#       },
+#   sitemap_url: {
+#       "urls": list[dict[str, str]],  # each dict: {"loc": str, "lastmod": str (optional)}
 #   },
-#   "run_at": str
 # }
 
 def _now_utc_iso_z() -> str:
@@ -69,13 +66,13 @@ def load_state(path: Path) -> StateType:
                 return data
         except Exception as e:
             print(f"⚠️  Could not read state file {path}: {e}", file=sys.stderr)
-    return {"sitemaps": {}, "run_at": None}
+    return {}
 
 def save_state(path: Path, state: StateType) -> None:
-    to_save: StateType = {"sitemaps": {}, "run_at": _now_utc_iso_z()}
-    for sm, entry in state.get("sitemaps", {}).items():
+    to_save: StateType = {}
+    for sm, entry in state.items():
         urls = entry.get("urls", [])
-        to_save["sitemaps"][sm] = {"urls": urls}
+        to_save[sm] = {"urls": urls}
     with path.open("w", encoding="utf-8") as f:
         json.dump(to_save, f, indent=2, ensure_ascii=False)
 
@@ -399,13 +396,12 @@ def main() -> int:
         return 2
 
     state = load_state(args.state_file)
-    state.setdefault("sitemaps", {})
 
     all_new: list[dict[str, str]] = []
     all_updated: list[dict[str, str]] = []
 
     for sm in sitemaps:
-        prev_entry = state["sitemaps"].get(sm, {})
+        prev_entry = state.get(sm, {})
         prev_urls: list[dict[str, str]] = prev_entry.get("urls", [])
         curr_urls = crawl_sitemap(sm, follow_index, args.timeout, args.workers, args.verbose)
         curr_urls.sort(key=lambda u: u.get("loc", ""))  # Sort alphabetically by 'loc'
@@ -414,8 +410,7 @@ def main() -> int:
             print_changes(sm, prev_urls, curr_urls, args.max_print, args.verbose)
             all_new.extend(added)
             all_updated.extend(updated)
-            state["sitemaps"][sm] = {"urls": curr_urls}
-
+            state[sm] = {"urls": curr_urls}
     save_state(args.state_file, state)
     if args.verbose:
         print(f"\nState saved to {args.state_file}")
