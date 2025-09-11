@@ -46,12 +46,7 @@ class FetchResult(t.TypedDict, total=False):
     content: bytes
     error: str
 
-StateType = t.Dict[str, t.Any]  # Overall state structure
-# {
-#   sitemap_url: {
-#       "urls": list[dict[str, str]],  # each dict: {"loc": str, "lastmod": str (optional)}
-#   },
-# }
+StateType = t.Dict[str, list[dict[str, str]]]  # Each sitemap URL maps to a list of URL dicts
 
 def _now_utc_iso_z() -> str:
     # RFC3339 UTC with trailing Z
@@ -62,19 +57,19 @@ def load_state(path: Path) -> StateType:
         try:
             with path.open("r", encoding="utf-8") as f:
                 data: StateType = json.load(f)
-                # No normalization needed, just ensure "urls" is a list of dicts
+                # Ensure each value is a list of dicts
+                for k, v in data.items():
+                    if not isinstance(v, list):
+                        data[k] = []
                 return data
         except Exception as e:
             print(f"⚠️  Could not read state file {path}: {e}", file=sys.stderr)
     return {}
 
 def save_state(path: Path, state: StateType) -> None:
-    to_save: StateType = {}
-    for sm, entry in state.items():
-        urls = entry.get("urls", [])
-        to_save[sm] = {"urls": urls}
+    # Save state as {sitemap_url: [ {loc, lastmod?}, ... ]}
     with path.open("w", encoding="utf-8") as f:
-        json.dump(to_save, f, indent=2, ensure_ascii=False)
+        json.dump(state, f, indent=2, ensure_ascii=False)
 
 def read_sitemap_list(path: Path) -> list[str]:
     lines: list[str] = []
@@ -401,8 +396,7 @@ def main() -> int:
     all_updated: list[dict[str, str]] = []
 
     for sm in sitemaps:
-        prev_entry = state.get(sm, {})
-        prev_urls: list[dict[str, str]] = prev_entry.get("urls", [])
+        prev_urls: list[dict[str, str]] = state.get(sm, [])
         curr_urls = crawl_sitemap(sm, follow_index, args.timeout, args.workers, args.verbose)
         curr_urls.sort(key=lambda u: u.get("loc", ""))  # Sort alphabetically by 'loc'
         if curr_urls:
@@ -410,7 +404,7 @@ def main() -> int:
             print_changes(sm, prev_urls, curr_urls, args.max_print, args.verbose)
             all_new.extend(added)
             all_updated.extend(updated)
-            state[sm] = {"urls": curr_urls}
+            state[sm] = curr_urls
     save_state(args.state_file, state)
     if args.verbose:
         print(f"\nState saved to {args.state_file}")
